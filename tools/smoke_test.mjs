@@ -27,6 +27,7 @@ const SHIMS = [
   '60-dnr.js',
   '70-proxy-host.js',
   '80-cors.js',
+  '90-netdiag.js',
 ];
 
 // ---------------------------------------------------------------------------
@@ -130,6 +131,8 @@ function makeMockChrome() {
       onHeadersReceived: mockEvent(),
       onErrorOccurred: mockEvent(),
       onBeforeSendHeaders: mockEvent(),
+      onSendHeaders: mockEvent(),
+      onCompleted: mockEvent(),
     },
     scripting: { executeScript: async () => [{ result: { ok: true, type: 'number', value: 4 } }] },
     declarativeNetRequest: {
@@ -171,16 +174,23 @@ function makeMockDocument() {
 
 function loadShims() {
   const native = makeMockChrome();
+  // Captured rather than printed: the shims are chatty at startup, and a few
+  // tests assert on what they reported.
+  const output = [];
+  const capture = (...args) => output.push(args.map((a) => String(a)).join(' '));
+  const consoleStub = { log: capture, info: capture, warn: capture, debug: capture, error: capture };
+
   // The vm context supplies the JS built-ins; these are the host bits the
   // shims reach for that a bare context does not have.
   const context = vm.createContext({
     chrome: native,
     document: makeMockDocument(),
-    console,
+    console: consoleStub,
     setTimeout,
     clearTimeout,
     URL,
   });
+  native.output = output;
 
   for (const file of SHIMS) {
     const path = join(REPO, 'ff-shim', file);
@@ -190,7 +200,7 @@ function loadShims() {
     // without it the shared `const NATIVE` in every shim would collide.
     vm.runInContext(`(function(){'use strict';\n${source}\n})();`, context, { filename: path });
   }
-  return { context, native, shimmed: context.chrome };
+  return { context, native, shimmed: context.chrome, output: native.output };
 }
 
 /** Promisify a Chrome-style callback API, capturing lastError. */
@@ -561,6 +571,53 @@ await test('page requests keep their Origin', async () => {
   assert(
     !returned.some((r) => r?.requestHeaders),
     'a web page request must be left untouched',
+  );
+});
+
+await test('a failed request to Anthropic is explained, with secrets masked', async () => {
+  const { native, output } = loadShims();
+
+  const request = {
+    requestId: '7',
+    url: 'https://api.anthropic.com/v1/organizations',
+    method: 'GET',
+    type: 'xmlhttprequest',
+    originUrl: 'moz-extension://test/_generated_background_page.html',
+    tabId: -1,
+    requestHeaders: [
+      { name: 'Origin', value: 'moz-extension://test' },
+      { name: 'Authorization', value: 'Bearer super-secret-token' },
+    ],
+  };
+  await native.webRequest.onSendHeaders.fire(request);
+  await native.webRequest.onCompleted.fire({ requestId: '7', statusCode: 403 });
+
+  const report = output.find((line) => line.includes('request to Anthropic failed'));
+  assert(report, 'a failing request should be reported');
+  assert(report.includes('HTTP 403'), 'the status should be named');
+  assert(report.includes('STILL PRESENT'), 'an unstripped Origin must be called out');
+  assert(
+    !report.includes('super-secret-token'),
+    'credentials must never be printed',
+  );
+  assert(report.includes('<redacted'), 'the credential header should still be listed');
+});
+
+await test('a successful request is not reported', async () => {
+  const { native, output } = loadShims();
+  const before = output.length;
+  await native.webRequest.onSendHeaders.fire({
+    requestId: '8',
+    url: 'https://api.anthropic.com/v1/messages',
+    method: 'POST',
+    originUrl: 'moz-extension://test/sidepanel.html',
+    tabId: -1,
+    requestHeaders: [],
+  });
+  await native.webRequest.onCompleted.fire({ requestId: '8', statusCode: 200 });
+  assert(
+    !output.slice(before).some((line) => line.includes('failed')),
+    'diagnostics must stay quiet when things work',
   );
 });
 

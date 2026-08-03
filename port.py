@@ -62,6 +62,7 @@ SHIM_BACKGROUND_SCRIPTS = (
     "ff-shim/60-dnr.js",
     "ff-shim/70-proxy-host.js",
     "ff-shim/80-cors.js",
+    "ff-shim/90-netdiag.js",
 )
 
 CLAUDE_MATCHES = ["https://claude.ai/*", "https://*.claude.ai/*"]

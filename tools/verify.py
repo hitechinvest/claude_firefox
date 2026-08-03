@@ -42,6 +42,7 @@ REQUIRED_SHIM_FILES = (
     "ff-shim/60-dnr.js",
     "ff-shim/70-proxy-host.js",
     "ff-shim/80-cors.js",
+    "ff-shim/90-netdiag.js",
     "ff-content/cdp-agent.js",
     "ff-content/cdp-main.js",
     "ff-content/claude-bridge.js",

@@ -41,14 +41,23 @@ const WEBSOCKET_ENDPOINTS = [
 const EXTENSION_BASE = NATIVE.runtime.getURL('');
 
 /**
- * True only when this extension issued the request. Firefox reports the
- * initiating document in `originUrl`; for background and side-panel fetches
+ * True only when this extension issued the request. Firefox normally reports
+ * the initiating document in `originUrl`; for background and side-panel fetches
  * that is a moz-extension:// URL under our own base.
+ *
+ * Some extension-initiated requests arrive with neither `originUrl` nor
+ * `documentUrl` set. Those are still safe to treat as ours: this listener only
+ * ever sees Anthropic's hosts, and a request with no tab did not come from a
+ * page. Anything that *does* carry an initiator is judged on it, so a request
+ * from a claude.ai tab keeps its Origin.
  */
 function isOwnRequest(details) {
   const initiator = details.originUrl ?? details.documentUrl;
-  return typeof initiator === 'string' && initiator.startsWith(EXTENSION_BASE);
+  if (typeof initiator === 'string') return initiator.startsWith(EXTENSION_BASE);
+  return details.tabId === undefined || details.tabId < 0;
 }
+
+let announced = false;
 
 function stripOrigin(details) {
   if (!isOwnRequest(details)) return {};
@@ -57,6 +66,10 @@ function stripOrigin(details) {
   const kept = headers.filter((header) => header.name.toLowerCase() !== 'origin');
   if (kept.length === headers.length) return {};
 
+  if (!announced) {
+    announced = true;
+    console.info('[ff-port] stripping Origin from this extension\'s requests to Anthropic');
+  }
   log('stripped Origin from', details.url);
   return { requestHeaders: kept };
 }
@@ -69,7 +82,8 @@ function listen(urls, label) {
     ]);
     return true;
   } catch (error) {
-    // Older Firefox rejects ws:/wss: match patterns in a webRequest filter.
+    // Older Firefox rejects ws:/wss: match patterns in a webRequest filter, and
+    // a build without blocking webRequest rejects the 'blocking' option.
     warn(`could not watch ${label} requests`, error);
     return false;
   }
@@ -78,6 +92,12 @@ function listen(urls, label) {
 if (!NATIVE.webRequest?.onBeforeSendHeaders) {
   warn('webRequest is unavailable; requests to Anthropic will keep their Origin header');
 } else {
-  listen(HTTP_ENDPOINTS, 'HTTP');
-  listen(WEBSOCKET_ENDPOINTS, 'WebSocket');
+  const http = listen(HTTP_ENDPOINTS, 'HTTP');
+  const websocket = listen(WEBSOCKET_ENDPOINTS, 'WebSocket');
+  // Printed once at startup: if the CORS rejection persists, the first thing
+  // to know is whether this listener is attached at all.
+  console.info(
+    `[ff-port] Origin stripping armed — HTTP: ${http ? 'yes' : 'NO'}, ` +
+      `WebSocket: ${websocket ? 'yes' : 'NO'}`,
+  );
 }
