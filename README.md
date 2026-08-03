@@ -52,6 +52,7 @@ python3 port.py --xpi                 # дополнительно упаков�
 | `externally_connectable` | нет | мост `postMessage` на claude.ai — `ff-shim/50-external.js` + `ff-content/claude-bridge*.js` |
 | `runtime.getContexts` / `ContextType` | частично | нормализация боковой панели — `ff-shim/10-runtime.js` |
 | `declarativeNetRequest.RuleActionType`, `HeaderOperation` | нет констант | значения-перечисления — `ff-shim/60-dnr.js` |
+| заголовок `Origin` на запросах расширения | добавляется | снимается — `ff-shim/80-cors.js` |
 | `chrome.*` в страницах расширения | — | `ff-page/page-shims.js`, вызовы уходят в фон через `ff-shim/70-proxy-host.js` |
 | `manifest.key`, `update_url`, `use_dynamic_url`, `storage.managed_schema` | нет | удалены |
 | `browser_specific_settings.gecko.id` | обязателен | добавлен |
@@ -125,6 +126,34 @@ Firefox грузит `default_panel` как есть, без `?tabId=`, а па�
 
 **Управляемое хранилище.** `storage.managed_schema` в Firefox не поддерживается;
 корпоративные политики через этот ключ не заедут.
+
+## Заголовок `Origin`
+
+Сервер Anthropic отвечает на запросы с заголовком `Origin`:
+
+```
+CORS requests are not allowed for this Organization because of its settings.
+```
+
+Это разница платформ, а не политика: то же расширение в Chrome принимается.
+Расширение Chromium, у которого есть `host_permissions` на хост, обращается к
+нему как к своему источнику и `Origin` не отправляет вовсе. Firefox даёт то же
+освобождение от CORS, но заголовок `Origin: moz-extension://<uuid>` всё равно
+ставит — и сервер принимает запрос за браузерный CORS-вызов.
+
+`ff-shim/80-cors.js` снимает этот заголовок через `webRequest.onBeforeSendHeaders`,
+восстанавливая то, что отправляет Chrome. Ничего взамен не подставляется:
+расширение не выдаёт себя ни за Chrome-расширение, ни за какой-либо источник, а
+аутентификация не меняется — OAuth-токен по-прежнему едет в запросе и
+по-прежнему должен быть валидным.
+
+Область действия узкая намеренно: только запросы, инициированные страницами
+самого расширения, и только к хостам Anthropic. Снятие `Origin` с запросов
+обычных страниц убрало бы заголовок, на который сайты опираются в защите от
+CSRF, поэтому проверка инициатора здесь несущая — и покрыта тестом.
+
+Если организация ваша, у этого есть и второй путь: настройка CORS в консоли
+Anthropic. Тогда шим не понадобится.
 
 ## Шимы в страницах расширения
 
@@ -209,6 +238,7 @@ ff-page/panel-diagnostics.js   отчёт вместо пустой панели
 ff-page/page-shims.js          слой совместимости для страниц расширения
 ff-page/proxy-client.js        chrome.debugger/offscreen/sidePanel в страницах
 ff-shim/70-proxy-host.js       обслуживание этих вызовов в фоне
+ff-shim/80-cors.js             снятие заголовка Origin с запросов к Anthropic
 tools/verify.py                статические проверки сборки
 tools/smoke_test.mjs           поведенческие тесты шимов
 ```

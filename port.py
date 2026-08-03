@@ -47,7 +47,9 @@ STRICT_MIN_VERSION = "139.0"
 DROPPED_PERMISSIONS = ("sidePanel", "debugger", "offscreen")
 
 # webRequest backs the Network.* CDP events the debugger shim emits.
-ADDED_PERMISSIONS = ("webRequest",)
+# webRequestBlocking lets ff-shim/80-cors.js drop the Origin header Firefox
+# adds to the extension's own requests, which Anthropic rejects as CORS.
+ADDED_PERMISSIONS = ("webRequest", "webRequestBlocking")
 
 # Loaded, in order, ahead of the extension's own background entry point.
 SHIM_BACKGROUND_SCRIPTS = (
@@ -59,6 +61,7 @@ SHIM_BACKGROUND_SCRIPTS = (
     "ff-shim/50-external.js",
     "ff-shim/60-dnr.js",
     "ff-shim/70-proxy-host.js",
+    "ff-shim/80-cors.js",
 )
 
 CLAUDE_MATCHES = ["https://claude.ai/*", "https://*.claude.ai/*"]

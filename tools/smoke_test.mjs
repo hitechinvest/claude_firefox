@@ -26,6 +26,7 @@ const SHIMS = [
   '50-external.js',
   '60-dnr.js',
   '70-proxy-host.js',
+  '80-cors.js',
 ];
 
 // ---------------------------------------------------------------------------
@@ -128,6 +129,7 @@ function makeMockChrome() {
       onBeforeRequest: mockEvent(),
       onHeadersReceived: mockEvent(),
       onErrorOccurred: mockEvent(),
+      onBeforeSendHeaders: mockEvent(),
     },
     scripting: { executeScript: async () => [{ result: { ok: true, type: 'number', value: 4 } }] },
     declarativeNetRequest: {
@@ -526,6 +528,40 @@ await test('debugger events are broadcast to extension pages', async () => {
   assertEqual(broadcast.args[0].namespace, 'debugger');
   assertEqual(broadcast.args[0].event, 'onEvent');
   assertEqual(broadcast.args[0].args[1], 'Page.frameNavigated');
+});
+
+await test('the Origin header is dropped from the extension\'s own requests', async () => {
+  const { native } = loadShims();
+  const returned = await native.webRequest.onBeforeSendHeaders.fire({
+    url: 'https://api.anthropic.com/v1/messages',
+    originUrl: 'moz-extension://test/_generated_background_page.html',
+    requestHeaders: [
+      { name: 'Origin', value: 'moz-extension://test' },
+      { name: 'Authorization', value: 'Bearer token' },
+    ],
+  });
+  const result = returned.find((r) => r?.requestHeaders);
+  assert(result, 'the listener did not rewrite the headers');
+  assertEqual(
+    result.requestHeaders.map((h) => h.name),
+    ['Authorization'],
+    'only Origin should be removed',
+  );
+});
+
+await test('page requests keep their Origin', async () => {
+  const { native } = loadShims();
+  // Stripping Origin from a page's request would remove a header servers use
+  // for CSRF defence — this must never fire for anything but our own contexts.
+  const returned = await native.webRequest.onBeforeSendHeaders.fire({
+    url: 'https://api.anthropic.com/v1/messages',
+    originUrl: 'https://evil.example/',
+    requestHeaders: [{ name: 'Origin', value: 'https://evil.example' }],
+  });
+  assert(
+    !returned.some((r) => r?.requestHeaders),
+    'a web page request must be left untouched',
+  );
 });
 
 // ---------------------------------------------------------------------------
