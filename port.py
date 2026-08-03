@@ -306,6 +306,32 @@ def add_charset(out: Path) -> list[str]:
     return notes
 
 
+PANEL_DIAGNOSTICS_TAG = '<script src="/ff-page/panel-diagnostics.js"></script>'
+
+
+def inject_panel_diagnostics(out: Path) -> list[str]:
+    """Load the diagnostics script ahead of each page's module bundle.
+
+    A classic script runs during parsing, before deferred modules, so its error
+    handlers are in place before the bundle starts.
+    """
+    notes = []
+    for name in ("sidepanel.html", "options.html"):
+        path = out / name
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if PANEL_DIAGNOSTICS_TAG in text:
+            continue
+        marker = "<script type=\"module\""
+        if marker not in text:
+            continue
+        patched = text.replace(marker, f"{PANEL_DIAGNOSTICS_TAG}\n    {marker}", 1)
+        path.write_text(patched, encoding="utf-8")
+        notes.append(f"injected panel diagnostics into {name}")
+    return notes
+
+
 def copy_shims(out: Path) -> None:
     for name in ("ff-shim", "ff-content", "ff-page"):
         src_dir = REPO / name
@@ -339,7 +365,7 @@ def build(source: Path, out: Path) -> dict:
     manifest_path.write_text(
         json.dumps(ported, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    for note in notes + add_charset(out):
+    for note in notes + add_charset(out) + inject_panel_diagnostics(out):
         log(note)
 
     copy_shims(out)
