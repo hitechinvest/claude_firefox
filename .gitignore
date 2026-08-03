@@ -1,0 +1,12 @@
+# Ported extension — regenerate with `python3 port.py`
+/build/
+/dist/
+/.work/
+
+# Downloaded upstream artefacts
+*.crx
+*.xpi
+*.zip
+
+node_modules/
+__pycache__/
