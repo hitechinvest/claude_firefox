@@ -245,7 +245,11 @@ def port_manifest(src: dict, root: Path) -> tuple[dict, list[str]]:
     # -- side panel -> sidebar ------------------------------------------------
     m["sidebar_action"] = {
         "default_title": "Claude",
-        "default_panel": "sidepanel.html",
+        # Not sidepanel.html directly: opening the sidebar from Firefox's own
+        # sidebar button loads default_panel with no ?tabId=, and the panel
+        # renders nothing without it.  The entry page resolves the active tab
+        # first.  See ff-page/sidepanel-entry.js.
+        "default_panel": "ff-page/sidepanel-entry.html",
         "default_icon": {"128": icon},
         "open_at_install": False,
     }
@@ -284,8 +288,26 @@ def port_manifest(src: dict, root: Path) -> tuple[dict, list[str]]:
 # --------------------------------------------------------------------------
 
 
+def add_charset(out: Path) -> list[str]:
+    """Give the extension's own pages an explicit encoding.
+
+    Firefox warns about `offscreen.html` because it is framed and declares
+    none; the shim loads it in an iframe, which makes the warning louder.
+    """
+    notes = []
+    for path in sorted(out.glob("*.html")):
+        text = path.read_text(encoding="utf-8")
+        if "charset" in text.lower():
+            continue
+        patched = text.replace("<head>", '<head>\n    <meta charset="utf-8" />', 1)
+        if patched != text:
+            path.write_text(patched, encoding="utf-8")
+            notes.append(f"added a charset declaration to {path.name}")
+    return notes
+
+
 def copy_shims(out: Path) -> None:
-    for name in ("ff-shim", "ff-content"):
+    for name in ("ff-shim", "ff-content", "ff-page"):
         src_dir = REPO / name
         if not src_dir.is_dir():
             raise SystemExit(f"missing {src_dir}")
@@ -317,7 +339,7 @@ def build(source: Path, out: Path) -> dict:
     manifest_path.write_text(
         json.dumps(ported, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    for note in notes:
+    for note in notes + add_charset(out):
         log(note)
 
     copy_shims(out)

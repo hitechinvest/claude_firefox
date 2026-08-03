@@ -44,6 +44,8 @@ REQUIRED_SHIM_FILES = (
     "ff-content/cdp-main.js",
     "ff-content/claude-bridge.js",
     "ff-content/claude-bridge-main.js",
+    "ff-page/sidepanel-entry.html",
+    "ff-page/sidepanel-entry.js",
 )
 
 # chrome.<namespace> occurrences the port has an answer for.  Anything else on
@@ -162,7 +164,9 @@ def check_shims_present(build: Path) -> None:
             fail(f"missing shim: {relative}")
     for relative in REQUIRED_SHIM_FILES:
         path = build / relative
-        if path.is_file() and "__FF_EXTENSION_ID__" in path.read_text(encoding="utf-8"):
+        if not path.is_file() or path.suffix != ".js":
+            continue
+        if "__FF_EXTENSION_ID__" in path.read_text(encoding="utf-8"):
             fail(f"{relative} still contains the unsubstituted __FF_EXTENSION_ID__ placeholder")
 
 
@@ -170,7 +174,7 @@ def check_api_drift(build: Path) -> None:
     """Report Chrome APIs used by the bundle that Firefox does not implement."""
     used: dict[str, int] = {}
     for path in build.rglob("*.js"):
-        if path.relative_to(build).parts[0] in {"ff-shim", "ff-content"}:
+        if path.relative_to(build).parts[0] in {"ff-shim", "ff-content", "ff-page"}:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for namespace in NAMESPACE_RE.findall(text):

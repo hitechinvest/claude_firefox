@@ -113,6 +113,11 @@ WebExtensions нельзя.
 разные URL панели для разных вкладок через `sidebarAction.setPanel({tabId})`,
 поэтому при переключении вкладок панель перезагружается.
 
+**Боковую панель можно открыть в обход расширения.** Кнопка боковой панели
+Firefox грузит `default_panel` как есть, без `?tabId=`, а панель без id вкладки
+не рендерится. Поэтому `default_panel` указывает на `ff-page/sidepanel-entry.html`:
+она определяет активную вкладку и передаёт управление настоящей панели.
+
 **`sidebarAction.open()` требует жеста пользователя.** По клику на иконку всё
 хорошо. Для `Ctrl+E` шим вешает свой обработчик раньше расширения — иначе жест
 теряется в асинхронном `tabs.query`.
@@ -171,6 +176,7 @@ ff-shim/60-dnr.js              константы declarativeNetRequest
 ff-content/cdp-main.js         мир MAIN: ввод, диалоги, console
 ff-content/cdp-agent.js        изолированный мир: мост со страницей
 ff-content/claude-bridge*.js   канал claude.ai <-> расширение
+ff-page/sidepanel-entry.*      резолв tabId перед загрузкой панели
 tools/verify.py                статические проверки сборки
 tools/smoke_test.mjs           поведенческие тесты шимов
 ```
