@@ -52,6 +52,7 @@ python3 port.py --xpi                 # дополнительно упаков�
 | `externally_connectable` | нет | мост `postMessage` на claude.ai — `ff-shim/50-external.js` + `ff-content/claude-bridge*.js` |
 | `runtime.getContexts` / `ContextType` | частично | нормализация боковой панели — `ff-shim/10-runtime.js` |
 | `declarativeNetRequest.RuleActionType`, `HeaderOperation` | нет констант | значения-перечисления — `ff-shim/60-dnr.js` |
+| `chrome.*` в страницах расширения | — | `ff-page/page-shims.js`, вызовы уходят в фон через `ff-shim/70-proxy-host.js` |
 | `manifest.key`, `update_url`, `use_dynamic_url`, `storage.managed_schema` | нет | удалены |
 | `browser_specific_settings.gecko.id` | обязателен | добавлен |
 
@@ -125,6 +126,24 @@ Firefox грузит `default_panel` как есть, без `?tabId=`, а па�
 **Управляемое хранилище.** `storage.managed_schema` в Firefox не поддерживается;
 корпоративные политики через этот ключ не заедут.
 
+## Шимы в страницах расширения
+
+`sidepanel.html` и `options.html` грузят тот же бандл, что и фон, но это
+отдельные контексты со своим `chrome`. Бандл при инициализации вешает
+`chrome.debugger.onEvent.addListener`, и без шимов это `TypeError` ещё до
+первого рендера React — панель остаётся пустой.
+
+Просто продублировать шимы в каждую страницу нельзя: они держат общее
+состояние (сессии отладчика, offscreen-документ, боковую панель) и вешают
+слушатели на весь браузер. Поэтому страницы получают тонкий клиент
+`ff-page/proxy-client.js`, который переправляет вызовы в фон, а фон отдаёт
+их настоящим шимам и рассылает события обратно. Владелец состояния — один.
+
+Проксируются только `debugger`, `offscreen` и `sidePanel`, по белому списку
+методов. Всё остальное — `runtime.getContexts`, константы
+`declarativeNetRequest` — это чистые значения и запросы, они ставятся в
+странице локально.
+
 ## Заметки по безопасности
 
 Скрипты в мире `MAIN` по определению доступны странице — изоляции там нет.
@@ -187,6 +206,9 @@ ff-content/cdp-agent.js        изолированный мир: мост со 
 ff-content/claude-bridge*.js   канал claude.ai <-> расширение
 ff-page/sidepanel-entry.*      резолв tabId перед загрузкой панели
 ff-page/panel-diagnostics.js   отчёт вместо пустой панели, если она не отрендерилась
+ff-page/page-shims.js          слой совместимости для страниц расширения
+ff-page/proxy-client.js        chrome.debugger/offscreen/sidePanel в страницах
+ff-shim/70-proxy-host.js       обслуживание этих вызовов в фоне
 tools/verify.py                статические проверки сборки
 tools/smoke_test.mjs           поведенческие тесты шимов
 ```

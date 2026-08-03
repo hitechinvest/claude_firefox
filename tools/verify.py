@@ -40,13 +40,22 @@ REQUIRED_SHIM_FILES = (
     "ff-shim/40-debugger.js",
     "ff-shim/50-external.js",
     "ff-shim/60-dnr.js",
+    "ff-shim/70-proxy-host.js",
     "ff-content/cdp-agent.js",
     "ff-content/cdp-main.js",
     "ff-content/claude-bridge.js",
     "ff-content/claude-bridge-main.js",
     "ff-page/sidepanel-entry.html",
     "ff-page/sidepanel-entry.js",
+    "ff-page/panel-diagnostics.js",
+    "ff-page/page-shims.js",
+    "ff-page/proxy-client.js",
 )
+
+# Pages that run the extension bundle must load the page-side shims, or the
+# bundle hits an undefined chrome.debugger and never renders.
+PAGES_NEEDING_SHIMS = ("sidepanel.html", "options.html")
+PAGE_SHIM_SRC = "/ff-page/page-shims.js"
 
 # chrome.<namespace> occurrences the port has an answer for.  Anything else on
 # Firefox's unsupported list is a finding.
@@ -170,6 +179,21 @@ def check_shims_present(build: Path) -> None:
             fail(f"{relative} still contains the unsubstituted __FF_EXTENSION_ID__ placeholder")
 
 
+def check_page_shims(build: Path) -> None:
+    """Every page that loads the bundle must pull in the page-side shims first."""
+    for name in PAGES_NEEDING_SHIMS:
+        path = build / name
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if PAGE_SHIM_SRC not in text:
+            fail(f"{name} loads the bundle without {PAGE_SHIM_SRC}")
+            continue
+        if text.index(PAGE_SHIM_SRC) > text.index("/assets/"):
+            fail(f"{name} loads the bundle before {PAGE_SHIM_SRC}")
+    note(f"page shims present in {', '.join(PAGES_NEEDING_SHIMS)}")
+
+
 def check_api_drift(build: Path) -> None:
     """Report Chrome APIs used by the bundle that Firefox does not implement."""
     used: dict[str, int] = {}
@@ -201,6 +225,7 @@ def main(argv: list[str]) -> int:
     if manifest:
         check_referenced_files(build, manifest)
         check_shims_present(build)
+        check_page_shims(build)
         check_api_drift(build)
 
     for message in notes:

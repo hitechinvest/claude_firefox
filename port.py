@@ -58,6 +58,7 @@ SHIM_BACKGROUND_SCRIPTS = (
     "ff-shim/40-debugger.js",
     "ff-shim/50-external.js",
     "ff-shim/60-dnr.js",
+    "ff-shim/70-proxy-host.js",
 )
 
 CLAUDE_MATCHES = ["https://claude.ai/*", "https://*.claude.ai/*"]
@@ -306,29 +307,36 @@ def add_charset(out: Path) -> list[str]:
     return notes
 
 
-PANEL_DIAGNOSTICS_TAG = '<script src="/ff-page/panel-diagnostics.js"></script>'
+# Order matters.  The classic script runs during parsing, before any deferred
+# module; the module runs in document order, so ahead of the page's own bundle.
+PAGE_SCRIPT_TAGS = (
+    '<script src="/ff-page/panel-diagnostics.js"></script>',
+    '<script type="module" src="/ff-page/page-shims.js"></script>',
+)
+
+# Pages that load the extension bundle and therefore need the same shims the
+# background has.
+SHIMMED_PAGES = ("sidepanel.html", "options.html")
 
 
-def inject_panel_diagnostics(out: Path) -> list[str]:
-    """Load the diagnostics script ahead of each page's module bundle.
-
-    A classic script runs during parsing, before deferred modules, so its error
-    handlers are in place before the bundle starts.
-    """
+def inject_page_scripts(out: Path) -> list[str]:
+    """Put the diagnostics and the page shims ahead of each page's bundle."""
     notes = []
-    for name in ("sidepanel.html", "options.html"):
+    for name in SHIMMED_PAGES:
         path = out / name
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8")
-        if PANEL_DIAGNOSTICS_TAG in text:
-            continue
-        marker = "<script type=\"module\""
+        marker = '<script type="module"'
         if marker not in text:
+            notes.append(f"{name}: no module bundle found, left alone")
             continue
-        patched = text.replace(marker, f"{PANEL_DIAGNOSTICS_TAG}\n    {marker}", 1)
-        path.write_text(patched, encoding="utf-8")
-        notes.append(f"injected panel diagnostics into {name}")
+        missing = [tag for tag in PAGE_SCRIPT_TAGS if tag not in text]
+        if not missing:
+            continue
+        prefix = "\n    ".join(missing)
+        path.write_text(text.replace(marker, f"{prefix}\n    {marker}", 1), encoding="utf-8")
+        notes.append(f"injected the page shims into {name}")
     return notes
 
 
@@ -365,7 +373,7 @@ def build(source: Path, out: Path) -> dict:
     manifest_path.write_text(
         json.dumps(ported, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    for note in notes + add_charset(out) + inject_panel_diagnostics(out):
+    for note in notes + add_charset(out) + inject_page_scripts(out):
         log(note)
 
     copy_shims(out)

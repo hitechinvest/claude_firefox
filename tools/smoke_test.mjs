@@ -25,6 +25,7 @@ const SHIMS = [
   '40-debugger.js',
   '50-external.js',
   '60-dnr.js',
+  '70-proxy-host.js',
 ];
 
 // ---------------------------------------------------------------------------
@@ -94,6 +95,9 @@ function makeMockChrome() {
       getContexts: async () => contexts,
       getManifest: () => ({ version: '0.0.0-test' }),
       onMessage: mockEvent(),
+      sendMessage: async (message) => {
+        calls.push({ name: 'runtime.sendMessage', args: [message] });
+      },
     },
     extension: { getViews: () => [] },
     storage: { local: { get: async () => ({}) } },
@@ -474,6 +478,54 @@ await test('declarativeNetRequest enums are filled in without shadowing natives'
     native.calls.some((c) => c.name === 'declarativeNetRequest.updateSessionRules'),
     'native methods must stay callable through the shim proxy',
   );
+});
+
+await test('extension pages can reach the shims through the proxy host', async () => {
+  const { native } = loadShims();
+
+  const returned = await native.runtime.onMessage.fire(
+    { __ffProxy: 'call', namespace: 'debugger', method: 'getTargets', args: [] },
+    { url: 'moz-extension://test/sidepanel.html?tabId=1' },
+  );
+  // The other shims share runtime.onMessage and ignore this envelope.
+  const response = returned.find((value) => value !== undefined);
+  assert(response?.ok, `getTargets should succeed: ${response?.error}`);
+  assert(Array.isArray(response.result), 'expected a target list');
+});
+
+await test('the proxy host refuses methods that are not on its allow-list', async () => {
+  const { native } = loadShims();
+  const returned = await native.runtime.onMessage.fire(
+    { __ffProxy: 'call', namespace: 'tabs', method: 'remove', args: [1] },
+    { url: 'moz-extension://test/sidepanel.html' },
+  );
+  const response = returned.find((r) => r !== undefined);
+  assert(response && response.ok === false, 'an unlisted namespace must be rejected');
+  assert(
+    response.error.includes('not proxied'),
+    `error should say why: ${response.error}`,
+  );
+});
+
+await test('debugger events are broadcast to extension pages', async () => {
+  const { shimmed, native } = loadShims();
+  await callback(shimmed, (cb) => shimmed.debugger.attach({ tabId: 1 }, '1.3', cb));
+  await callback(shimmed, (cb) => shimmed.debugger.sendCommand({ tabId: 1 }, 'Page.enable', {}, cb));
+
+  await native.webNavigation.onCommitted.fire({
+    tabId: 1,
+    frameId: 0,
+    parentFrameId: -1,
+    url: 'https://example.com/',
+  });
+
+  const broadcast = native.calls.find(
+    (c) => c.name === 'runtime.sendMessage' && c.args[0]?.__ffProxy === 'event',
+  );
+  assert(broadcast, 'no event was broadcast to extension pages');
+  assertEqual(broadcast.args[0].namespace, 'debugger');
+  assertEqual(broadcast.args[0].event, 'onEvent');
+  assertEqual(broadcast.args[0].args[1], 'Page.frameNavigated');
 });
 
 // ---------------------------------------------------------------------------
