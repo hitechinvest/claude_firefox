@@ -106,9 +106,10 @@ function makeMockChrome({ groupingWorks = true } = {}) {
       },
     },
     extension: { getViews: () => [] },
-    storage: { local: { get: async () => ({}) } },
+    storage: { local: { get: async () => ({}) }, onChanged: mockEvent() },
     tabs: {
       onRemoved: mockEvent(),
+      onActivated: mockEvent(),
       query: async () =>
         [1, 2, 3].map((id) => {
           const tab = { id, windowId: 10, title: `Tab ${id}`, url: 'https://example.com/' };
@@ -153,6 +154,7 @@ function makeMockChrome({ groupingWorks = true } = {}) {
       getPanel: async () => 'moz-extension://test/sidepanel.html',
       open: record('sidebarAction.open'),
       toggle: record('sidebarAction.toggle'),
+      isOpen: async () => chrome.sidebarIsOpen ?? true,
     },
     tabGroups: {
       TAB_GROUP_ID_NONE: -1,
@@ -705,6 +707,47 @@ await test('a tab in no group reports TAB_GROUP_ID_NONE, not undefined', async (
     tab.groupId,
     shimmed.tabGroups.TAB_GROUP_ID_NONE,
     'createGroup() compares against this; undefined would read as "already grouped"',
+  );
+});
+
+await test('the sidebar follows the active tab', async () => {
+  const { native } = loadShims();
+  await native.tabs.onActivated.fire({ tabId: 42 });
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  const retarget = native.calls
+    .filter((c) => c.name === 'sidebarAction.setPanel')
+    .pop();
+  assert(retarget, 'switching tabs should repoint the sidebar');
+  assert(
+    retarget.args[0].panel.endsWith('sidepanel.html?tabId=42'),
+    `expected the new tab in the panel URL, got ${retarget.args[0].panel}`,
+  );
+});
+
+await test('a closed sidebar is not reloaded on tab switches', async () => {
+  const { native } = loadShims();
+  native.sidebarIsOpen = false;
+  await native.tabs.onActivated.fire({ tabId: 42 });
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert(
+    !native.calls.some((c) => c.name === 'sidebarAction.setPanel'),
+    'nothing should happen while the sidebar is closed',
+  );
+});
+
+await test('the tab the extension just opened the panel for is not reloaded', async () => {
+  const { shimmed, native } = loadShims();
+  await shimmed.sidePanel.setOptions({ tabId: 42, path: 'sidepanel.html?tabId=42', enabled: true });
+  const before = native.calls.filter((c) => c.name === 'sidebarAction.setPanel').length;
+
+  await native.tabs.onActivated.fire({ tabId: 42 });
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  assertEqual(
+    native.calls.filter((c) => c.name === 'sidebarAction.setPanel').length,
+    before,
+    'the follower should not reload a panel that is already on this tab',
   );
 });
 
