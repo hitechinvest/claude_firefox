@@ -22,6 +22,7 @@ const SHIMS = [
   '10-runtime.js',
   '20-sidepanel.js',
   '30-offscreen.js',
+  '35-tabgroups.js',
   '40-debugger.js',
   '50-external.js',
   '60-dnr.js',
@@ -76,8 +77,11 @@ function mockEvent() {
   };
 }
 
-function makeMockChrome() {
+function makeMockChrome({ groupingWorks = true } = {}) {
   const calls = [];
+  // Mirrors what the browser reports back on the tab objects.
+  const nativeGroupByTab = new Map();
+  let nextNativeGroupId = 5;
   const record = (name) => (...args) => {
     calls.push({ name, args });
     return Promise.resolve();
@@ -105,8 +109,34 @@ function makeMockChrome() {
     storage: { local: { get: async () => ({}) } },
     tabs: {
       onRemoved: mockEvent(),
-      query: async () => [{ id: 1, windowId: 10, title: 'Tab', url: 'https://example.com/' }],
-      get: async (id) => ({ id, windowId: 10 }),
+      query: async () =>
+        [1, 2, 3].map((id) => {
+          const tab = { id, windowId: 10, title: `Tab ${id}`, url: 'https://example.com/' };
+          const groupId = nativeGroupByTab.get(id);
+          if (groupId !== undefined) tab.groupId = groupId;
+          return tab;
+        }),
+      get: async (id) => {
+        const tab = { id, windowId: 10 };
+        const groupId = nativeGroupByTab.get(id);
+        // Firefox leaves groupId off tabs that are in no group.
+        if (groupId !== undefined) tab.groupId = groupId;
+        return tab;
+      },
+      group: async (options) => {
+        calls.push({ name: 'tabs.group', args: [options] });
+        const groupId = options.groupId ?? nextNativeGroupId++;
+        // "Broken" stands in for grouping the browser accepts but does not
+        // apply — a disabled profile setting, an ignored createProperties.
+        if (groupingWorks) {
+          for (const tabId of options.tabIds ?? []) nativeGroupByTab.set(tabId, groupId);
+        }
+        return groupId;
+      },
+      ungroup: async (tabIds) => {
+        calls.push({ name: 'tabs.ungroup', args: [tabIds] });
+        for (const tabId of [].concat(tabIds)) nativeGroupByTab.delete(tabId);
+      },
       update: record('tabs.update'),
       reload: record('tabs.reload'),
       captureTab: async (tabId, options) => {
@@ -123,6 +153,16 @@ function makeMockChrome() {
       getPanel: async () => 'moz-extension://test/sidepanel.html',
       open: record('sidebarAction.open'),
       toggle: record('sidebarAction.toggle'),
+    },
+    tabGroups: {
+      TAB_GROUP_ID_NONE: -1,
+      Color: { ORANGE: 'orange', GREY: 'grey' },
+      get: async (groupId) => ({ id: groupId, title: 'native' }),
+      query: async () => [],
+      update: async (groupId, properties) => {
+        calls.push({ name: 'tabGroups.update', args: [groupId, properties] });
+        return { id: groupId, ...properties };
+      },
     },
     commands: { onCommand: mockEvent() },
     webNavigation: { onCommitted: mockEvent(), onCompleted: mockEvent() },
@@ -172,8 +212,8 @@ function makeMockDocument() {
   return document;
 }
 
-function loadShims() {
-  const native = makeMockChrome();
+function loadShims(options) {
+  const native = makeMockChrome(options);
   // Captured rather than printed: the shims are chatty at startup, and a few
   // tests assert on what they reported.
   const output = [];
@@ -618,6 +658,53 @@ await test('a successful request is not reported', async () => {
   assert(
     !output.slice(before).some((line) => line.includes('failed')),
     'diagnostics must stay quiet when things work',
+  );
+});
+
+await test('native tab grouping is used unchanged when it holds', async () => {
+  const { shimmed, native } = loadShims({ groupingWorks: true });
+
+  const groupId = await shimmed.tabs.group({ tabIds: [1], createProperties: { windowId: 10 } });
+  const tab = await shimmed.tabs.get(1);
+
+  assertEqual(tab.groupId, groupId, 'the bundle compares exactly these two');
+  assert(groupId < 900_000, 'a working browser should keep its own group id');
+  assert(
+    native.calls.some((c) => c.name === 'tabs.group'),
+    'the browser should still be the one doing the grouping',
+  );
+});
+
+await test('grouping the browser drops is tracked so the invariant still holds', async () => {
+  const { shimmed } = loadShims({ groupingWorks: false });
+
+  // This is the failure the agent hit: every action re-checks that
+  // tabs.get(tab).groupId still equals what tabs.group() returned, and throws
+  // "Tab N is not in the same group as M" when it does not.
+  const groupId = await shimmed.tabs.group({ tabIds: [1], createProperties: { windowId: 10 } });
+  const tab = await shimmed.tabs.get(1);
+  assertEqual(tab.groupId, groupId, 'the shim must make both sides agree');
+
+  const added = await shimmed.tabs.group({ tabIds: [2], groupId });
+  assertEqual(added, groupId, 'adding a tab must stay in the same group');
+
+  const members = await shimmed.tabs.query({ groupId });
+  assertEqual(members.length, 2, 'both tabs should be reported in the group');
+
+  await shimmed.tabGroups.update(groupId, { title: 'Claude', color: 'orange' });
+  assertEqual((await shimmed.tabGroups.get(groupId)).title, 'Claude');
+
+  await shimmed.tabs.ungroup([1]);
+  assertEqual((await shimmed.tabs.get(1)).groupId, -1, 'ungrouped tabs report NONE');
+});
+
+await test('a tab in no group reports TAB_GROUP_ID_NONE, not undefined', async () => {
+  const { shimmed } = loadShims();
+  const tab = await shimmed.tabs.get(3);
+  assertEqual(
+    tab.groupId,
+    shimmed.tabGroups.TAB_GROUP_ID_NONE,
+    'createGroup() compares against this; undefined would read as "already grouped"',
   );
 });
 

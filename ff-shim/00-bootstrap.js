@@ -151,6 +151,27 @@ globalThis.__ffPort = {
     namespaces[name] = value;
   },
   /**
+   * Replace individual members of a namespace Firefox does implement, leaving
+   * everything else native.  For the cases where the API exists but behaves
+   * differently enough to break the bundle.
+   */
+  overrideNamespace(name, overrides) {
+    const target = NATIVE[name];
+    if (!target) {
+      namespaces[name] = overrides;
+      return;
+    }
+    namespaces[name] = new Proxy(target, {
+      get(object, prop) {
+        if (prop in overrides) return overrides[prop];
+        return bind(object, Reflect.get(object, prop));
+      },
+      has(object, prop) {
+        return prop in overrides || Reflect.has(object, prop);
+      },
+    });
+  },
+  /**
    * Add members to a namespace Firefox does implement, without hiding the
    * native ones.  Anything the native object already has wins, so this only
    * fills genuine gaps.

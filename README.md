@@ -48,6 +48,7 @@ python3 port.py --xpi                 # дополнительно упаков�
 | `background.service_worker` | нет | событийная страница через `background.scripts` |
 | `chrome.sidePanel` | нет | `sidebarAction` — `ff-shim/20-sidepanel.js` |
 | `chrome.debugger` (CDP) | **нет вообще** | эмуляция на `tabs`/`scripting`/`webRequest`/`webNavigation` — `ff-shim/40-debugger.js` + `ff-content/cdp-*.js` |
+| группировка вкладок | есть, но расходится | сверка и учёт в расширении — `ff-shim/35-tabgroups.js` |
 | `chrome.offscreen` | нет | скрытый iframe в фоновой странице — `ff-shim/30-offscreen.js` |
 | `externally_connectable` | нет | мост `postMessage` на claude.ai — `ff-shim/50-external.js` + `ff-content/claude-bridge*.js` |
 | `runtime.getContexts` / `ContextType` | частично | нормализация боковой панели — `ff-shim/10-runtime.js` |
@@ -126,6 +127,33 @@ Firefox грузит `default_panel` как есть, без `?tabId=`, а па�
 
 **Управляемое хранилище.** `storage.managed_schema` в Firefox не поддерживается;
 корпоративные политики через этот ключ не заедут.
+
+## Группы вкладок
+
+Тут дело не в отсутствии API: `tabGroups` есть с Firefox 139, `tabs.group()` — с
+138. Дело в контракте, на который опирается бандл:
+
+```js
+const id = await chrome.tabs.group({tabIds: [tab], createProperties: {…}})
+…
+if ((await chrome.tabs.get(tab)).groupId !== id) throw new Error(
+  `Tab ${tab} is not in the same group as ${main}`)
+```
+
+Это равенство перепроверяется перед каждым действием агента, поэтому что угодно,
+из-за чего две стороны разойдутся — выключенная в профиле группировка,
+проигнорированный `createProperties`, `groupId`, которого нет на объекте вкладки, —
+останавливает агента на первом же шаге ровно этой ошибкой.
+
+`ff-shim/35-tabgroups.js` сначала спрашивает браузер, потом проверяет результат.
+Если браузер справился, ничего не меняется и используется его группировка. Если
+нет — группировка учитывается внутри расширения и отдаётся через те же чтения,
+так что инвариант бандла держится в обоих случаях. Ценой того, что в полосе
+вкладок группа тогда не появится: агент важнее.
+
+Заодно шим подставляет `TAB_GROUP_ID_NONE` там, где Firefox не кладёт `groupId` на
+вкладку вне группы — иначе `undefined !== -1` читается бандлом как «вкладка уже в
+какой-то группе».
 
 ## Заголовок `Origin`
 
@@ -237,6 +265,7 @@ ff-shim/00-bootstrap.js        прокси над chrome.*, записывае�
 ff-shim/10-runtime.js          runtime.getContexts / ContextType
 ff-shim/20-sidepanel.js        chrome.sidePanel -> sidebarAction
 ff-shim/30-offscreen.js        chrome.offscreen -> iframe
+ff-shim/35-tabgroups.js        сверка группировки вкладок, учёт в расширении при расхождении
 ff-shim/40-debugger.js         chrome.debugger -> эмуляция CDP
 ff-shim/50-external.js         runtime.onMessageExternal
 ff-shim/60-dnr.js              константы declarativeNetRequest

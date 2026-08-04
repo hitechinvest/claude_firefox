@@ -37,6 +37,7 @@ REQUIRED_SHIM_FILES = (
     "ff-shim/10-runtime.js",
     "ff-shim/20-sidepanel.js",
     "ff-shim/30-offscreen.js",
+    "ff-shim/35-tabgroups.js",
     "ff-shim/40-debugger.js",
     "ff-shim/50-external.js",
     "ff-shim/60-dnr.js",
