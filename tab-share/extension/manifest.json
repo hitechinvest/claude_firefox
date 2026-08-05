@@ -1,0 +1,31 @@
+{
+  "manifest_version": 2,
+  "name": "Tab Share — удалённый просмотр и управление",
+  "version": "1.0.0",
+  "description": "Расшарить выбранную вкладку по сети: другой пользователь открывает её в своём браузере по IP:порт и может смотреть и управлять ей.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "tab-share@local",
+      "strict_min_version": "115.0"
+    }
+  },
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "webNavigation",
+    "storage",
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "browser_action": {
+    "default_title": "Tab Share",
+    "default_popup": "popup.html",
+    "default_icon": "icons/icon.svg"
+  },
+  "icons": {
+    "48": "icons/icon.svg",
+    "96": "icons/icon.svg"
+  }
+}

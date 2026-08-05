@@ -1,0 +1,81 @@
+* { box-sizing: border-box; }
+body {
+  font: 13px/1.4 system-ui, sans-serif;
+  width: 320px;
+  margin: 0;
+  padding: 12px 14px 14px;
+  color: #1a202c;
+  background: #fff;
+}
+h1 { font-size: 15px; margin: 0 0 10px; }
+label { display: block; margin: 8px 0; font-weight: 600; color: #4a5568; }
+input, select {
+  width: 100%;
+  margin-top: 3px;
+  padding: 6px 7px;
+  font: inherit;
+  border: 1px solid #cbd5e0;
+  border-radius: 6px;
+  background: #fff;
+  color: #1a202c;
+}
+.row { display: flex; gap: 10px; }
+.row .grow { flex: 1; }
+.row .port { width: 90px; }
+.hint { font-size: 11px; color: #718096; margin: 8px 0 10px; font-weight: 400; }
+button {
+  width: 100%;
+  padding: 9px;
+  margin-top: 8px;
+  font: inherit;
+  font-weight: 600;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  background: #edf2f7;
+  color: #1a202c;
+}
+button.primary { background: #2b6cb0; color: #fff; }
+button.danger { background: #e53e3e; color: #fff; }
+button:hover { filter: brightness(0.96); }
+.badge {
+  display: inline-block;
+  background: #38a169;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+.field {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid #edf2f7;
+}
+.field span { color: #718096; }
+.field b { text-align: right; word-break: break-all; }
+.mono { font-family: ui-monospace, monospace; }
+.big { font-size: 18px; letter-spacing: 2px; color: #2b6cb0; }
+.error {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  background: #fff5f5;
+  border: 1px solid #feb2b2;
+  border-radius: 6px;
+  color: #c53030;
+  font-size: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  body { background: #1a202c; color: #e2e8f0; }
+  input, select { background: #2d3748; color: #e2e8f0; border-color: #4a5568; }
+  button { background: #2d3748; color: #e2e8f0; }
+  .field { border-color: #2d3748; }
+  .field span { color: #a0aec0; }
+  .big { color: #90cdf4; }
+  .error { background: #3b1a1a; border-color: #c53030; color: #feb2b2; }
+}

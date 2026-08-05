@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <h1>Tab Share</h1>
+
+  <div id="setup">
+    <label>Вкладка
+      <select id="tab"></select>
+    </label>
+    <label>URL релея (relay.php на вашем сайте)
+      <input id="relay" type="text" placeholder="https://ваш-сайт/tabshare/relay.php" spellcheck="false">
+    </label>
+    <div class="row">
+      <label class="grow">Кадров/с
+        <input id="fps" type="number" min="1" max="10" value="3">
+      </label>
+      <label class="grow">Качество
+        <input id="quality" type="number" min="20" max="90" value="55">
+      </label>
+    </div>
+    <p class="hint">
+      Всё идёт через ваш сайт по HTTPS. Загрузите <b>relay.php</b> и <b>viewer.php</b>
+      из папки <b>server/</b> в одну директорию. Про безопасность — в README.
+    </p>
+    <button id="start" class="primary">Начать трансляцию</button>
+  </div>
+
+  <div id="live" hidden>
+    <div class="badge">В ЭФИРЕ</div>
+    <div class="field"><span>Вкладка</span><b id="liveTab"></b></div>
+    <div class="field"><span>Адрес для гостя</span><b id="liveUrl" class="mono"></b></div>
+    <div class="field"><span>PIN-код</span><b id="livePin" class="mono big"></b></div>
+    <div class="field"><span>Зрителей</span><b id="liveViewers">0</b></div>
+    <button id="copy">Скопировать ссылку с PIN</button>
+    <button id="stop" class="danger">Остановить</button>
+  </div>
+
+  <p id="error" class="error" hidden></p>
+
+  <script src="popup.js"></script>
+</body>
+</html>

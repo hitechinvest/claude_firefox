@@ -10,3 +10,6 @@
 
 node_modules/
 __pycache__/
+
+# Tab Share — runtime session data created by relay.php
+/tab-share/server/data/
