@@ -1,7 +1,9 @@
 <?php
 // Страница-зритель для гостя. Отдаёт HTML и talks к relay.php в той же папке.
 // Сессия берётся из ?s=..., PIN — из #pin=... (фрагмент на сервер не уходит)
-// или вводится вручную.
+// или вводится вручную. Поддерживает два вида кадров:
+//   image/jpeg  → рисуем в <img> (координаты — доля вьюпорта)
+//   text/html   → зеркалим DOM в <iframe> (координаты — доля всего документа)
 $session = preg_replace('/[^A-Za-z0-9_-]/', '', (string)($_GET['s'] ?? ''));
 ?><!DOCTYPE html>
 <html lang="ru">
@@ -25,11 +27,15 @@ $session = preg_replace('/[^A-Za-z0-9_-]/', '', (string)($_GET['s'] ?? ''));
   #dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
     background: #e53e3e; margin-right: 5px; vertical-align: middle; }
   #dot.ok { background: #38a169; }
-  #stage { position: relative; height: calc(100% - 45px); display: flex;
-    align-items: center; justify-content: center; overflow: auto; background: #0b0d12; }
-  #screen { max-width: 100%; max-height: 100%; display: block; user-select: none;
-    -webkit-user-drag: none; }
-  #overlay { position: fixed; inset: 0; background: rgba(10,12,18,0.94);
+  #stage { position: relative; height: calc(100% - 45px); overflow: auto; background: #0b0d12; }
+  #jpegwrap { display: flex; align-items: center; justify-content: center; min-height: 100%; }
+  #screen { max-width: 100%; max-height: 100%; display: block; margin: 0 auto;
+    user-select: none; -webkit-user-drag: none; }
+  #htmlwrap { position: relative; display: none; background: #fff; }
+  #frame { border: 0; display: block; background: #fff; pointer-events: none; }
+  #overlay { position: absolute; inset: 0; background: transparent; cursor: default; }
+  #overlay.off { cursor: not-allowed; }
+  #ovr { position: fixed; inset: 0; background: rgba(10,12,18,0.94);
     display: flex; align-items: center; justify-content: center; z-index: 10; }
   #card { background: #1a1f2b; padding: 26px 28px; border-radius: 12px; width: 300px;
     text-align: center; border: 1px solid #2d3748; }
@@ -53,11 +59,17 @@ $session = preg_replace('/[^A-Za-z0-9_-]/', '', (string)($_GET['s'] ?? ''));
     <button id="ctl" class="on" title="Передавать мышь и клавиатуру">Управление: вкл</button>
     <span id="status"><span id="dot"></span><span id="statusText">подключение…</span></span>
   </div>
+
   <div id="stage">
-    <img id="screen" alt="удалённая вкладка" draggable="false">
+    <div id="jpegwrap"><img id="screen" alt="удалённая вкладка" draggable="false"></div>
+    <div id="htmlwrap">
+      <iframe id="frame" sandbox="allow-same-origin" scrolling="no"
+              referrerpolicy="no-referrer"></iframe>
+      <div id="overlay"></div>
+    </div>
   </div>
 
-  <div id="overlay">
+  <div id="ovr">
     <div id="card">
       <h2>Введите PIN-код</h2>
       <input id="pin" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="off">
@@ -74,27 +86,20 @@ $session = preg_replace('/[^A-Za-z0-9_-]/', '', (string)($_GET['s'] ?? ''));
   const RELAY = "relay.php";
   const VIEWER_ID = Math.random().toString(36).slice(2, 12);
 
-  const screen = document.getElementById("screen");
-  const overlay = document.getElementById("overlay");
-  const pinInput = document.getElementById("pin");
-  const enterBtn = document.getElementById("enter");
-  const msg = document.getElementById("msg");
-  const urlInput = document.getElementById("url");
-  const ctlBtn = document.getElementById("ctl");
-  const dot = document.getElementById("dot");
-  const statusText = document.getElementById("statusText");
+  const $ = (id) => document.getElementById(id);
+  const screen = $("screen"), jpegwrap = $("jpegwrap");
+  const htmlwrap = $("htmlwrap"), frame = $("frame"), overlay = $("overlay");
+  const ovr = $("ovr"), pinInput = $("pin"), enterBtn = $("enter"), msg = $("msg");
+  const urlInput = $("url"), ctlBtn = $("ctl"), dot = $("dot"), statusText = $("statusText");
 
-  let pin = "";
-  let authed = false;
-  let control = true;
-  let since = -1;
-  let stopped = false;
+  let pin = "", authed = false, control = true, since = -1, stopped = false;
+  let mode = "jpeg"; // текущий вид кадра
 
   const hashParams = new URLSearchParams(location.hash.slice(1));
   if (hashParams.get("pin")) pinInput.value = hashParams.get("pin");
 
   function setStatus(ok, text) { dot.classList.toggle("ok", !!ok); statusText.textContent = text; }
-  const q = (extra) => `${RELAY}?action=${extra}&session=${encodeURIComponent(SESSION)}&pin=${encodeURIComponent(pin)}&viewer=${VIEWER_ID}`;
+  const q = (a) => `${RELAY}?action=${a}&session=${encodeURIComponent(SESSION)}&pin=${encodeURIComponent(pin)}&viewer=${VIEWER_ID}`;
 
   async function tryAuth() {
     pin = pinInput.value.trim();
@@ -103,16 +108,34 @@ $session = preg_replace('/[^A-Za-z0-9_-]/', '', (string)($_GET['s'] ?? ''));
       const r = await fetch(q("view") + "&since=999999999", { cache: "no-store" });
       if (r.status === 403) { msg.textContent = "Неверный PIN или трансляция не найдена"; return; }
       authed = true;
-      overlay.style.display = "none";
+      ovr.style.display = "none";
       setStatus(true, "подключено");
       framePoll();
-      inputMeta();
-    } catch (e) {
-      msg.textContent = "Сервер недоступен";
-    }
+      metaPoll();
+    } catch (e) { msg.textContent = "Сервер недоступен"; }
   }
 
-  // long-poll кадров
+  function showJpeg(url) {
+    mode = "jpeg";
+    jpegwrap.style.display = "flex";
+    htmlwrap.style.display = "none";
+    const old = screen.src;
+    screen.onload = () => { if (old && old.startsWith("blob:")) URL.revokeObjectURL(old); };
+    screen.src = url;
+  }
+
+  function showHtml(html, meta) {
+    mode = "html";
+    jpegwrap.style.display = "none";
+    htmlwrap.style.display = "block";
+    const dw = Math.max(1, meta.dw || 1024), dh = Math.max(1, meta.dh || 768);
+    frame.style.width = dw + "px";
+    frame.style.height = dh + "px";
+    htmlwrap.style.width = dw + "px";
+    htmlwrap.style.height = dh + "px";
+    frame.srcdoc = html;
+  }
+
   async function framePoll() {
     while (authed && !stopped) {
       try {
@@ -121,31 +144,36 @@ $session = preg_replace('/[^A-Za-z0-9_-]/', '', (string)($_GET['s'] ?? ''));
         const ver = parseInt(r.headers.get("X-Frame-Ver") || String(since), 10);
         if (r.status === 200) {
           since = ver;
-          const blob = await r.blob();
-          const u = URL.createObjectURL(blob);
-          const old = screen.src;
-          screen.onload = () => { if (old && old.startsWith("blob:")) URL.revokeObjectURL(old); };
-          screen.src = u;
+          const ct = r.headers.get("Content-Type") || "";
+          if (ct.indexOf("text/html") === 0 || ct.indexOf("text/html") > -1) {
+            const html = await r.text();
+            let meta = {};
+            const mh = r.headers.get("X-Frame-Meta");
+            if (mh) { try { meta = JSON.parse(decodeURIComponent(mh)); } catch (e) {} }
+            showHtml(html, meta);
+          } else {
+            const blob = await r.blob();
+            showJpeg(URL.createObjectURL(blob));
+          }
           setStatus(true, "подключено");
         } else if (r.status === 204) {
           since = ver;
         }
       } catch (e) {
         setStatus(false, "переподключение…");
-        await new Promise((r) => setTimeout(r, 1000));
+        await new Promise((res) => setTimeout(res, 1000));
       }
     }
   }
 
-  // редкий пинг статуса «в эфире»
-  async function inputMeta() {
+  async function metaPoll() {
     while (authed && !stopped) {
       try {
         const r = await fetch(`${RELAY}?action=meta&session=${encodeURIComponent(SESSION)}`, { cache: "no-store" });
         const m = await r.json();
         if (m && m.live === false) setStatus(false, "трансляция остановлена");
       } catch (e) {}
-      await new Promise((r) => setTimeout(r, 5000));
+      await new Promise((res) => setTimeout(res, 5000));
     }
   }
 
@@ -153,49 +181,64 @@ $session = preg_replace('/[^A-Za-z0-9_-]/', '', (string)($_GET['s'] ?? ''));
     if (!authed) return;
     fetch(q("input"), { method: "POST", body: JSON.stringify({ t, payload }), keepalive: true }).catch(() => {});
   }
+  const mods = (e) => ({ ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey });
 
   enterBtn.addEventListener("click", tryAuth);
   pinInput.addEventListener("keydown", (e) => { if (e.key === "Enter") tryAuth(); });
 
-  // координаты внутри картинки [0..1]
-  function norm(e) {
+  // === координаты ===
+  // JPEG: доля вьюпорта относительно картинки. HTML: доля всего документа
+  // относительно оверлея (оверлей ровно накрывает iframe размера dw×dh).
+  function normJpeg(e) {
     const r = screen.getBoundingClientRect();
-    let x = (e.clientX - r.left) / r.width;
-    let y = (e.clientY - r.top) / r.height;
-    return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
+    return { x: clamp((e.clientX - r.left) / r.width), y: clamp((e.clientY - r.top) / r.height), doc: false };
   }
-  const mods = (e) => ({ ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey });
+  function normHtml(e) {
+    const r = overlay.getBoundingClientRect();
+    return { x: clamp((e.clientX - r.left) / r.width), y: clamp((e.clientY - r.top) / r.height), doc: true };
+  }
+  const clamp = (v) => Math.min(1, Math.max(0, v));
 
-  let moveThrottle = 0;
-  screen.addEventListener("mousemove", (e) => {
-    if (!control) return;
-    const now = Date.now();
-    if (now - moveThrottle < 80) return;
-    moveThrottle = now;
-    const p = norm(e);
-    sendInput("input", { kind: "mousemove", x: p.x, y: p.y, ...mods(e) });
-  });
-  screen.addEventListener("click", (e) => {
-    if (!control) return; e.preventDefault();
-    const p = norm(e);
-    sendInput("input", { kind: "click", x: p.x, y: p.y, button: 0, ...mods(e) });
-  });
-  screen.addEventListener("dblclick", (e) => {
-    if (!control) return; e.preventDefault();
-    const p = norm(e);
-    sendInput("input", { kind: "dblclick", x: p.x, y: p.y, button: 0, ...mods(e) });
-  });
-  screen.addEventListener("contextmenu", (e) => {
-    if (!control) return; e.preventDefault();
-    const p = norm(e);
-    sendInput("input", { kind: "click", x: p.x, y: p.y, button: 2, ...mods(e) });
-  });
-  screen.addEventListener("wheel", (e) => {
-    if (!control) return; e.preventDefault();
-    const p = norm(e);
-    sendInput("input", { kind: "wheel", x: p.x, y: p.y, deltaX: e.deltaX, deltaY: e.deltaY });
-  }, { passive: false });
+  function bindPointer(el, normFn, opts) {
+    let moveThrottle = 0;
+    el.addEventListener("mousemove", (e) => {
+      if (!control || !authed) return;
+      const now = Date.now();
+      if (now - moveThrottle < 80) return;
+      moveThrottle = now;
+      const p = normFn(e);
+      sendInput("input", { kind: "mousemove", x: p.x, y: p.y, doc: p.doc, ...mods(e) });
+    });
+    el.addEventListener("click", (e) => {
+      if (!control || !authed) return; e.preventDefault();
+      const p = normFn(e);
+      sendInput("input", { kind: "click", x: p.x, y: p.y, doc: p.doc, button: 0, ...mods(e) });
+    });
+    el.addEventListener("dblclick", (e) => {
+      if (!control || !authed) return; e.preventDefault();
+      const p = normFn(e);
+      sendInput("input", { kind: "dblclick", x: p.x, y: p.y, doc: p.doc, button: 0, ...mods(e) });
+    });
+    el.addEventListener("contextmenu", (e) => {
+      if (!control || !authed) return; e.preventDefault();
+      const p = normFn(e);
+      sendInput("input", { kind: "click", x: p.x, y: p.y, doc: p.doc, button: 2, ...mods(e) });
+    });
+    if (opts && opts.wheelToHost) {
+      el.addEventListener("wheel", (e) => {
+        if (!control || !authed) return; e.preventDefault();
+        const p = normFn(e);
+        sendInput("input", { kind: "wheel", x: p.x, y: p.y, doc: p.doc, deltaX: e.deltaX, deltaY: e.deltaY });
+      }, { passive: false });
+    }
+  }
 
+  // JPEG: колесо шлём хосту (виден только вьюпорт).
+  bindPointer(screen, normJpeg, { wheelToHost: true });
+  // HTML: колесо НЕ шлём — гость листает зеркало локально через #stage.
+  bindPointer(overlay, normHtml, { wheelToHost: false });
+
+  // клавиатура — общая; идёт в активный элемент реальной страницы
   window.addEventListener("keydown", (e) => {
     if (!control || !authed) return;
     if (document.activeElement === urlInput || document.activeElement === pinInput) return;
@@ -205,23 +248,23 @@ $session = preg_replace('/[^A-Za-z0-9_-]/', '', (string)($_GET['s'] ?? ''));
     if (!printable && !special) return;
     if (e.ctrlKey || e.metaKey) return;
     e.preventDefault();
-    sendInput("input", { kind: "key", key: e.key, code: e.code, keyCode: e.keyCode,
-      ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey });
+    sendInput("input", { kind: "key", key: e.key, code: e.code, keyCode: e.keyCode, ...mods(e) });
   });
 
-  document.getElementById("back").onclick = () => sendInput("nav", { action: "back" });
-  document.getElementById("fwd").onclick = () => sendInput("nav", { action: "forward" });
-  document.getElementById("reload").onclick = () => sendInput("nav", { action: "reload" });
+  $("back").onclick = () => sendInput("nav", { action: "back" });
+  $("fwd").onclick = () => sendInput("nav", { action: "forward" });
+  $("reload").onclick = () => sendInput("nav", { action: "reload" });
   urlInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && urlInput.value.trim()) sendInput("nav", { action: "goto", url: urlInput.value.trim() });
   });
   ctlBtn.addEventListener("click", () => {
     control = !control;
     ctlBtn.classList.toggle("on", control);
+    overlay.classList.toggle("off", !control);
     ctlBtn.textContent = "Управление: " + (control ? "вкл" : "выкл");
   });
 
-  if (!SESSION) { setStatus(false, "нет session в ссылке"); overlay.querySelector("h2").textContent = "Ссылка без session"; }
+  if (!SESSION) { setStatus(false, "нет session"); document.querySelector("#card h2").textContent = "Ссылка без session"; }
   else { setStatus(false, "введите PIN"); pinInput.focus(); if (pinInput.value.trim()) tryAuth(); }
 })();
 </script>

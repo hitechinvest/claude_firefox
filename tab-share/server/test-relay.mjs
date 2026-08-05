@@ -98,6 +98,32 @@ async function main() {
   ok(r.status === 200 && b2 === "JPEG-FRAME-2" && r.headers.get("x-frame-ver") === "2",
      "long-poll дождался кадра #2");
 
+  // 8.5 HTML-кадр: тип text/html и мета X-Frame-Meta доезжают до гостя
+  const htmlBody = "<!DOCTYPE html><html><body><h1>DOM mirror</h1></body></html>";
+  const fmeta = encodeURIComponent(JSON.stringify({ dw: 1200, dh: 3400, sx: 0, sy: 0 }));
+  r = await fetch(relay("frame", "&meta=" + fmeta), {
+    method: "POST", headers: { "Content-Type": "text/html; charset=utf-8" },
+    body: new TextEncoder().encode(htmlBody),
+  });
+  j = await r.json();
+  ok(r.ok && j.ver === 3, "html-кадр #3 принят");
+
+  r = await fetch(`${BASE}/relay.php?action=view&session=${SESSION}&pin=${PIN}&viewer=guestone&since=2`);
+  const htmlGot = await r.text();
+  const ctGot = r.headers.get("content-type") || "";
+  const metaGot = JSON.parse(decodeURIComponent(r.headers.get("x-frame-meta") || "%7B%7D"));
+  ok(r.status === 200 && ctGot.indexOf("text/html") === 0 && htmlGot === htmlBody,
+     "html-кадр отдан гостю с Content-Type text/html");
+  ok(metaGot.dw === 1200 && metaGot.dh === 3400, "X-Frame-Meta с размерами документа доехал");
+
+  // doc-координатный ввод от гостя
+  r = await fetch(`${BASE}/relay.php?action=input&session=${SESSION}&pin=${PIN}&viewer=guestone`,
+    { method: "POST", body: JSON.stringify({ t: "input", payload: { kind: "click", x: 0.3, y: 0.8, doc: true } }) });
+  ok(r.ok, "doc-координатный ввод принят");
+  r = await fetch(relay("pull"), { method: "POST" });
+  j = await r.json();
+  ok(j.events.length === 1 && j.events[0].payload.doc === true, "pull вернул doc-событие с флагом doc:true");
+
   // 9. stop и проверка, что сессия исчезла
   r = await fetch(relay("stop"), { method: "POST" });
   ok(r.ok, "stop выполнен");

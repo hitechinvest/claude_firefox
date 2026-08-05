@@ -16,6 +16,7 @@ const state = {
   relayUrl: "",
   session: "",
   hostKey: "",
+  mode: "jpeg", // "jpeg" (скриншоты) или "html" (зеркало DOM)
   fps: 3,
   quality: 55,
   token: "", // это PIN для гостя
@@ -72,18 +73,29 @@ function guestUrlFrom(relayUrl, session) {
 
 // --- захват вкладки → relay ---------------------------------------------
 
+async function sendJpegFrame() {
+  const dataUrl = await browser.tabs.captureTab(state.tabId, { format: "jpeg", quality: state.quality });
+  const blob = await (await fetch(dataUrl)).blob();
+  return fetch(relay("frame"), { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: blob });
+}
+
+async function sendHtmlFrame() {
+  const snap = await browser.tabs.sendMessage(state.tabId, { ch: "ts-snapshot" });
+  if (!snap || !snap.html) throw new Error("не удалось снять DOM (привилегированная страница?)");
+  const meta = encodeURIComponent(JSON.stringify({ dw: snap.dw, dh: snap.dh, sx: snap.sx, sy: snap.sy }));
+  return fetch(relay("frame", "&meta=" + meta), {
+    method: "POST",
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+    body: snap.html,
+  });
+}
+
 async function startCaptureLoop() {
   const gen = ++captureGen;
   while (state.running && gen === captureGen) {
     const t0 = Date.now();
     try {
-      const dataUrl = await browser.tabs.captureTab(state.tabId, { format: "jpeg", quality: state.quality });
-      const blob = await (await fetch(dataUrl)).blob();
-      const resp = await fetch(relay("frame"), {
-        method: "POST",
-        headers: { "Content-Type": "image/jpeg" },
-        body: blob,
-      });
+      const resp = state.mode === "html" ? await sendHtmlFrame() : await sendJpegFrame();
       if (resp.ok) {
         const j = await resp.json().catch(() => null);
         if (j && typeof j.viewers === "number" && j.viewers !== state.viewers) {
@@ -96,7 +108,7 @@ async function startCaptureLoop() {
         setError("Релей: " + resp.status + (j && j.error ? " " + j.error : ""));
       }
     } catch (e) {
-      // captureTab падает на привилегированных страницах; fetch — при сетевой ошибке
+      // captureTab/snapshot падают на привилегированных страницах; fetch — при сетевой ошибке
       setError("Кадр не отправлен: " + e.message);
     }
     const wait = Math.max(0, Math.round(1000 / state.fps) - (Date.now() - t0));
@@ -188,6 +200,7 @@ async function startSharing(cfg) {
   state.session = hex(12);
   state.hostKey = hex(24);
   state.token = genPin();
+  state.mode = cfg.mode === "html" ? "html" : "jpeg";
   state.fps = Math.min(10, Math.max(1, parseInt(cfg.fps, 10) || 3));
   state.quality = Math.min(90, Math.max(20, parseInt(cfg.quality, 10) || 55));
   state.viewers = 0;
@@ -196,7 +209,7 @@ async function startSharing(cfg) {
   state.accessUrl = "";
   broadcastState();
 
-  await browser.storage.local.set({ relayUrl }).catch(() => {});
+  await browser.storage.local.set({ relayUrl, mode: state.mode }).catch(() => {});
 
   try {
     const resp = await fetch(relay("start", "&pin=" + encodeURIComponent(state.token)), { method: "POST" });
@@ -267,8 +280,8 @@ browser.runtime.onMessage.addListener(async (msg) => {
       const list = tabs
         .filter((t) => t.id != null)
         .map((t) => ({ id: t.id, title: t.title || t.url || "вкладка", url: t.url || "", active: !!t.active }));
-      const saved = await browser.storage.local.get("relayUrl").catch(() => ({}));
-      return { state, tabs: list, savedRelayUrl: saved.relayUrl || "" };
+      const saved = await browser.storage.local.get(["relayUrl", "mode"]).catch(() => ({}));
+      return { state, tabs: list, savedRelayUrl: saved.relayUrl || "", savedMode: saved.mode || "jpeg" };
     }
     case "start":
       await startSharing(msg);

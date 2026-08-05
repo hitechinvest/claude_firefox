@@ -144,6 +144,14 @@ case 'frame': {
     $body = file_get_contents('php://input');
     if ($body === false || $body === '') fail(400, 'empty frame');
     if (strlen($body) > MAX_FRAME_BYTES) fail(413, 'frame too large');
+    // тип кадра: image/* (JPEG) или text/html (зеркало DOM)
+    $ct = (string)($_SERVER['CONTENT_TYPE'] ?? 'image/jpeg');
+    if (!preg_match('#^(image/[\w.+-]+|text/html)#i', $ct)) $ct = 'application/octet-stream';
+    // необязательная мета (для HTML — размеры документа), приходит urlencoded
+    $fmeta = param('meta');
+    if (strlen($fmeta) > 4096) $fmeta = '';
+    file_put_contents($dir . '/frame.ct', substr($ct, 0, 120));
+    file_put_contents($dir . '/frame.meta', $fmeta);
     $tmp = $dir . '/frame.tmp';
     file_put_contents($tmp, $body);
     @rename($tmp, $dir . '/frame.bin');
@@ -207,8 +215,11 @@ case 'view': {
         if ($ver > $since && is_file($dir . '/frame.bin')) {
             $bytes = file_get_contents($dir . '/frame.bin');
             if ($bytes !== false) {
-                header('Content-Type: image/jpeg');
+                $ct = @file_get_contents($dir . '/frame.ct');
+                header('Content-Type: ' . ($ct !== false && $ct !== '' ? $ct : 'image/jpeg'));
                 header('X-Frame-Ver: ' . $ver);
+                $fmeta = @file_get_contents($dir . '/frame.meta');
+                if ($fmeta !== false && $fmeta !== '') header('X-Frame-Meta: ' . $fmeta);
                 header('Cache-Control: no-store');
                 echo $bytes;
                 exit;

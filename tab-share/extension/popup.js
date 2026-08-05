@@ -3,7 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const els = {
   setup: $("setup"), live: $("live"), error: $("error"),
-  tab: $("tab"), relay: $("relay"), fps: $("fps"), quality: $("quality"),
+  tab: $("tab"), relay: $("relay"), mode: $("mode"), fps: $("fps"), quality: $("quality"),
   start: $("start"), stop: $("stop"), copy: $("copy"),
   liveTab: $("liveTab"), liveUrl: $("liveUrl"), livePin: $("livePin"), liveViewers: $("liveViewers"),
 };
@@ -34,6 +34,7 @@ function render(data) {
   }
 
   if (data.savedRelayUrl && !els.relay.value) els.relay.value = data.savedRelayUrl;
+  if (data.savedMode && !render._modeSet) { els.mode.value = data.savedMode; render._modeSet = true; }
 
   const running = s.running || s.connecting;
   els.setup.hidden = running;
@@ -61,6 +62,7 @@ els.start.addEventListener("click", async () => {
     cmd: "start",
     tabId: parseInt(els.tab.value, 10),
     relayUrl: els.relay.value,
+    mode: els.mode.value,
     fps: els.fps.value,
     quality: els.quality.value,
   });

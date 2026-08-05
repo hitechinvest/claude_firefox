@@ -1,7 +1,11 @@
 "use strict";
 
-// Проигрывает ввод удалённого пользователя в расшаренной вкладке.
-// Координаты приходят нормализованными [0..1] относительно вьюпорта.
+// Проигрывает ввод удалённого пользователя в расшаренной вкладке и, в
+// HTML-режиме, отдаёт снимок DOM для зеркалирования у гостя.
+//
+// Координаты приходят нормализованными [0..1]. В JPEG-режиме — относительно
+// вьюпорта; в HTML-режиме гость видит весь документ, поэтому там координаты
+// относительно полного размера документа (payload.doc === true).
 //
 // Важно: синтетические события имеют isTrusted === false. Для большинства
 // сайтов и React-приложений этого достаточно, но страницы, проверяющие
@@ -11,8 +15,25 @@
   if (window.__tabShareInputInstalled) return;
   window.__tabShareInputInstalled = true;
 
-  const px = (nx) => Math.round(nx * window.innerWidth);
-  const py = (ny) => Math.round(ny * window.innerHeight);
+  // Перевод нормализованных координат в координаты вьюпорта.
+  // В HTML-режиме (input.doc) точка задана долей от всего документа —
+  // при необходимости подкручиваем прокрутку, чтобы цель попала во вьюпорт.
+  function resolvePoint(input) {
+    if (input.doc) {
+      const de = document.documentElement;
+      const dw = Math.max(de.scrollWidth, window.innerWidth);
+      const dh = Math.max(de.scrollHeight, window.innerHeight);
+      const X = input.x * dw, Y = input.y * dh;
+      let vx = X - window.scrollX, vy = Y - window.scrollY;
+      if (vx < 0 || vy < 0 || vx >= window.innerWidth || vy >= window.innerHeight) {
+        window.scrollTo(Math.max(0, X - window.innerWidth / 2), Math.max(0, Y - window.innerHeight / 2));
+        vx = X - window.scrollX;
+        vy = Y - window.scrollY;
+      }
+      return { x: Math.round(vx), y: Math.round(vy) };
+    }
+    return { x: Math.round(input.x * window.innerWidth), y: Math.round(input.y * window.innerHeight) };
+  }
 
   function targetAt(x, y) {
     return document.elementFromPoint(x, y) || document.body || document.documentElement;
@@ -177,20 +198,20 @@
   function apply(input) {
     const kind = input.kind;
     if (kind === "click" || kind === "dblclick" || kind === "mousedown" || kind === "mouseup" || kind === "mousemove") {
-      const x = px(input.x), y = py(input.y);
+      const p = resolvePoint(input);
       const opts = {
         ctrlKey: input.ctrlKey, shiftKey: input.shiftKey, altKey: input.altKey, metaKey: input.metaKey,
       };
-      if (kind === "click") doClick(x, y, input.button || 0, opts);
+      if (kind === "click") doClick(p.x, p.y, input.button || 0, opts);
       else if (kind === "dblclick") {
-        doClick(x, y, 0, opts);
-        fireMouse("dblclick", x, y, 0, { ...opts, detail: 2 });
-      } else fireMouse(kind, x, y, input.button || 0, opts);
+        doClick(p.x, p.y, 0, opts);
+        fireMouse("dblclick", p.x, p.y, 0, { ...opts, detail: 2 });
+      } else fireMouse(kind, p.x, p.y, input.button || 0, opts);
     } else if (kind === "wheel") {
-      const x = px(input.x), y = py(input.y);
-      const el = targetAt(x, y);
+      const p = resolvePoint(input);
+      const el = targetAt(p.x, p.y);
       if (el) el.dispatchEvent(new WheelEvent("wheel", {
-        bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y,
+        bubbles: true, cancelable: true, composed: true, clientX: p.x, clientY: p.y,
         deltaX: input.deltaX || 0, deltaY: input.deltaY || 0,
       }));
       window.scrollBy(input.deltaX || 0, input.deltaY || 0);
@@ -199,12 +220,64 @@
     }
   }
 
-  browser.runtime.onMessage.addListener((msg) => {
-    if (msg && msg.ch === "ts-input" && msg.input) {
+  // --- снимок DOM для HTML-режима -----------------------------------------
+  // Клонируем документ, переносим в клон текущие значения полей (их нет в
+  // outerHTML), выкидываем <script> и ставим <base href>, чтобы относительные
+  // ссылки на CSS/картинки резолвились у гостя относительно исходной страницы.
+  function buildSnapshot() {
+    const de = document.documentElement;
+    const clone = de.cloneNode(true);
+
+    const sel = "input, textarea, select, option";
+    const live = document.querySelectorAll(sel);
+    const cloned = clone.querySelectorAll(sel);
+    for (let i = 0; i < live.length && i < cloned.length; i++) {
+      const l = live[i], c = cloned[i];
+      const tag = l.tagName.toLowerCase();
+      if (tag === "input") {
+        const type = (l.type || "text").toLowerCase();
+        if (type === "checkbox" || type === "radio") {
+          if (l.checked) c.setAttribute("checked", ""); else c.removeAttribute("checked");
+        } else {
+          c.setAttribute("value", l.value);
+        }
+      } else if (tag === "textarea") {
+        c.textContent = l.value;
+      } else if (tag === "option") {
+        if (l.selected) c.setAttribute("selected", ""); else c.removeAttribute("selected");
+      }
+    }
+
+    clone.querySelectorAll("script").forEach((s) => s.remove());
+
+    let head = clone.querySelector("head");
+    if (!head) {
+      head = document.createElement("head");
+      clone.insertBefore(head, clone.firstChild);
+    }
+    head.querySelectorAll("base").forEach((b) => b.remove());
+    const base = document.createElement("base");
+    base.setAttribute("href", document.baseURI);
+    head.insertBefore(base, head.firstChild);
+
+    return {
+      html: "<!DOCTYPE html>\n" + clone.outerHTML,
+      dw: Math.max(de.scrollWidth, window.innerWidth),
+      dh: Math.max(de.scrollHeight, window.innerHeight),
+      sx: window.scrollX,
+      sy: window.scrollY,
+    };
+  }
+
+  browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (!msg) return;
+    if (msg.ch === "ts-input" && msg.input) {
+      try { apply(msg.input); } catch (e) {}
+    } else if (msg.ch === "ts-snapshot") {
       try {
-        apply(msg.input);
+        return Promise.resolve(buildSnapshot());
       } catch (e) {
-        // не роняем страницу из-за одного события
+        return Promise.resolve(null);
       }
     }
   });

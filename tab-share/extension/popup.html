@@ -14,6 +14,12 @@
     <label>URL релея (relay.php на вашем сайте)
       <input id="relay" type="text" placeholder="https://ваш-сайт/tabshare/relay.php" spellcheck="false">
     </label>
+    <label>Что передавать
+      <select id="mode">
+        <option value="jpeg">Картинка (JPEG) — точная копия экрана</option>
+        <option value="html">HTML (DOM) — чёткий текст, легче трафик</option>
+      </select>
+    </label>
     <div class="row">
       <label class="grow">Кадров/с
         <input id="fps" type="number" min="1" max="10" value="3">
