@@ -245,6 +245,56 @@ function loadShims(options) {
   return { context, native, shimmed: context.chrome, output: native.output };
 }
 
+/**
+ * Load one of the ff-page scripts on its own, with a storage stub and the real
+ * fetch/Response from Node.  Those files are plain scripts, not shims, so they
+ * get a context of their own rather than the shim stack.
+ */
+function loadPageScript(file, { fetchImpl } = {}) {
+  const stored = {};
+  const writes = [];
+  const api = {
+    storage: {
+      local: {
+        get: async (keys) => {
+          const wanted = [].concat(keys);
+          return Object.fromEntries(
+            wanted.filter((key) => key in stored).map((key) => [key, stored[key]]),
+          );
+        },
+        set: async (values) => {
+          Object.assign(stored, values);
+          writes.push(values);
+        },
+        remove: async (key) => delete stored[key],
+      },
+      onChanged: { addListener() {} },
+    },
+  };
+
+  const context = vm.createContext({
+    browser: api,
+    chrome: api,
+    console,
+    setTimeout,
+    clearTimeout,
+    URL,
+    URLSearchParams,
+    Blob,
+    Response,
+    JSON,
+    Date,
+    location: { pathname: '/sidepanel.html', search: '?tabId=5' },
+    fetch: fetchImpl,
+    addEventListener() {},
+  });
+
+  vm.runInContext(readFileSync(join(REPO, 'ff-page', file), 'utf8'), context, {
+    filename: file,
+  });
+  return { context, stored, writes };
+}
+
 /** Promisify a Chrome-style callback API, capturing lastError. */
 function callback(chrome, fn) {
   return new Promise((resolve) => {
@@ -749,6 +799,58 @@ await test('the tab the extension just opened the panel for is not reloaded', as
     before,
     'the follower should not reload a panel that is already on this tab',
   );
+});
+
+await test('the transcript records a streamed reply as readable text', async () => {
+  const stream = [
+    'event: content_block_delta',
+    'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"При"}}',
+    '',
+    'event: content_block_delta',
+    'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"вет"}}',
+    '',
+    'data: [DONE]',
+    '',
+  ].join('\n');
+
+  const { context, stored } = loadPageScript('transcript-recorder.js', {
+    fetchImpl: async () => new Response(stream, { status: 200 }),
+  });
+
+  await context.fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    body: JSON.stringify({ model: 'claude-opus-5', messages: [{ role: 'user', content: 'ping' }] }),
+  });
+  await new Promise((resolve) => setTimeout(resolve, 700));
+
+  const log = stored.ffPortTranscript;
+  assert(Array.isArray(log) && log.length === 1, 'expected exactly one entry');
+  const [entry] = log;
+  assertEqual(entry.request.turns[0], { role: 'user', text: 'ping' });
+  assertEqual(entry.request.model, 'claude-opus-5');
+  assertEqual(entry.response.text, 'Привет', 'the deltas should be reassembled');
+  assertEqual(entry.status, 200);
+});
+
+await test('the transcript ignores requests to unrelated hosts', async () => {
+  const { context, stored } = loadPageScript('transcript-recorder.js', {
+    fetchImpl: async () => new Response('hello', { status: 200 }),
+  });
+
+  await context.fetch('https://example.com/tracker', { method: 'POST', body: 'secret' });
+  await new Promise((resolve) => setTimeout(resolve, 700));
+
+  assert(!stored.ffPortTranscript, 'only Anthropic hosts should be recorded');
+});
+
+await test('the transcript passes the response through untouched', async () => {
+  const { context } = loadPageScript('transcript-recorder.js', {
+    fetchImpl: async () => new Response('{"ok":true}', { status: 200 }),
+  });
+
+  // Wrapping fetch must not consume the body the caller is going to read.
+  const response = await context.fetch('https://api.anthropic.com/v1/x');
+  assertEqual(await response.json(), { ok: true });
 });
 
 // ---------------------------------------------------------------------------

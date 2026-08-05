@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Claude — локальная история</title>
+    <link rel="stylesheet" href="transcript.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Локальная история</h1>
+      <p id="summary" class="muted">Загрузка…</p>
+      <div class="controls">
+        <input id="search" type="search" placeholder="Поиск по тексту" />
+        <label class="toggle">
+          <input id="recording" type="checkbox" />
+          Записывать
+        </label>
+        <button id="export-md" type="button">Скачать Markdown</button>
+        <button id="export-json" type="button">Скачать JSON</button>
+        <button id="clear" type="button" class="danger">Очистить</button>
+      </div>
+    </header>
+    <main id="entries"></main>
+    <script src="transcript.js"></script>
+  </body>
+</html>

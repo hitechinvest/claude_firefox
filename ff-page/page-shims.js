@@ -17,3 +17,9 @@ import '../ff-shim/00-bootstrap.js';
 import '../ff-shim/10-runtime.js';
 import '../ff-shim/60-dnr.js';
 import './proxy-client.js';
+
+// Not compatibility shims, but they need the same "before the bundle" slot:
+// the recorder has to wrap fetch before anything captures a reference to it,
+// and the draft keeper has to be listening before the composer renders.
+import './transcript-recorder.js';
+import './draft-keeper.js';

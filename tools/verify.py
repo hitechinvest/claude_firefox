@@ -44,6 +44,7 @@ REQUIRED_SHIM_FILES = (
     "ff-shim/70-proxy-host.js",
     "ff-shim/80-cors.js",
     "ff-shim/90-netdiag.js",
+    "ff-shim/95-transcript.js",
     "ff-content/cdp-agent.js",
     "ff-content/cdp-main.js",
     "ff-content/claude-bridge.js",
@@ -53,6 +54,11 @@ REQUIRED_SHIM_FILES = (
     "ff-page/panel-diagnostics.js",
     "ff-page/page-shims.js",
     "ff-page/proxy-client.js",
+    "ff-page/draft-keeper.js",
+    "ff-page/transcript-recorder.js",
+    "ff-page/transcript.html",
+    "ff-page/transcript.js",
+    "ff-page/transcript.css",
 )
 
 # Pages that run the extension bundle must load the page-side shims, or the
